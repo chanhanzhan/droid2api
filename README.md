@@ -279,7 +279,25 @@ droid2api支持三级授权优先级：
    ```
    自动刷新令牌，每6小时更新一次。
 
-3. **客户端授权**（fallback）
+3. **auth.json多账号轮询**
+   在项目根目录创建 `auth.json`，支持配置多个 `FACTORY_API_KEY` 或 `DROID_REFRESH_KEY`，系统会自动轮询：
+   ```json
+   {
+     "FACTORY_API_KEY": [
+       "factory_key_account_a",
+       "factory_key_account_b"
+     ],
+     "DROID_REFRESH_KEY": [
+       "refresh_token_account_c",
+       "refresh_token_account_d"
+     ]
+   }
+   ```
+   - 同时配置时会优先轮询 `FACTORY_API_KEY` 账号，其次刷新令牌账号
+   - 每次新的对话/请求都会按顺序切换账号（例如：A → B → C → A）
+   - 刷新令牌账号会在启动时预刷新，并按6小时节奏保持有效
+
+4. **客户端授权**（fallback）
    无需配置，直接使用客户端请求头的authorization字段。
 
 ### 什么时候使用FACTORY_API_KEY？
