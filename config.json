@@ -1,5 +1,6 @@
 {
   "port": 3000,
+  "api_key": "",
   "endpoint": [
     {
       "name": "openai",
@@ -46,8 +47,8 @@
       "reasoning": "off"
     },
     {
-      "name": "gemini-2.5-pro"，
-      "id": gemini-2.5-pro",
+      "name": "gemini-2.5-pro",
+      "id": "gemini-2.5-pro",
       "type": "common",
       "reasoning": "off"
     },
