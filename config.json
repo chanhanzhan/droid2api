@@ -19,7 +19,7 @@
       "name": "Opus 4.1",
       "id": "claude-opus-4-1-20250805",
       "type": "anthropic",
-      "reasoning": "off"
+      "reasoning": "high"
     },
     {
       "name": "Sonnet 4",
@@ -43,6 +43,12 @@
       "name": "GPT-5-Codex",
       "id": "gpt-5-codex",
       "type": "openai",
+      "reasoning": "off"
+    },
+    {
+      "name": "gemini-2.5-pro"，
+      "id": gemini-2.5-pro",
+      "type": "google",
       "reasoning": "off"
     },
     {
