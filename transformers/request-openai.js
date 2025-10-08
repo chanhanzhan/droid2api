@@ -101,21 +101,15 @@ export function transformToOpenAI(openaiRequest) {
   // Handle reasoning field based on model configuration
   const reasoningLevel = getModelReasoning(openaiRequest.model);
   if (reasoningLevel) {
+    // Add reasoning field based on model configuration
     targetRequest.reasoning = {
       effort: reasoningLevel,
       summary: 'auto'
     };
-  }
-  // If request already has reasoning field, respect the configuration rule
-  // Remove it if model config is off/invalid, otherwise override with config
-  if (openaiRequest.reasoning) {
-    if (reasoningLevel) {
-      targetRequest.reasoning = {
-        effort: reasoningLevel,
-        summary: 'auto'
-      };
-    }
-    // If reasoningLevel is null (off/invalid), don't add reasoning field
+  } else {
+    // If reasoning is off or invalid, explicitly remove reasoning field
+    // This ensures any reasoning field from the original request is deleted
+    delete targetRequest.reasoning;
   }
 
   // Pass through other parameters

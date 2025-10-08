@@ -127,23 +127,10 @@ export function transformToAnthropic(openaiRequest) {
       type: 'enabled',
       budget_tokens: budgetTokens[reasoningLevel]
     };
-  }
-  // If request already has thinking field, respect the configuration rule
-  // Remove it if model config is off/invalid, otherwise override with config
-  if (openaiRequest.thinking) {
-    if (reasoningLevel) {
-      const budgetTokens = {
-        'low': 4096,
-        'medium': 12288,
-        'high': 24576
-      };
-      
-      anthropicRequest.thinking = {
-        type: 'enabled',
-        budget_tokens: budgetTokens[reasoningLevel]
-      };
-    }
-    // If reasoningLevel is null (off/invalid), don't add thinking field
+  } else {
+    // If reasoning is off or invalid, explicitly remove thinking field
+    // This ensures any thinking field from the original request is deleted
+    delete anthropicRequest.thinking;
   }
 
   // Pass through other compatible parameters

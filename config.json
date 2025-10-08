@@ -38,7 +38,7 @@
       "name": "GPT-5",
       "id": "gpt-5-2025-08-07",
       "type": "openai",
-      "reasoning": "off"
+      "reasoning": "high"
     },
     {
       "name": "GPT-5-Codex",
