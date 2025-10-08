@@ -1,9 +1,12 @@
 import { logDebug } from '../logger.js';
 import { getSystemPrompt, getModelReasoning, getUserAgent } from '../config.js';
 
+const MIN_OUTPUT_TOKENS = 16;
+const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
+
 export function transformToOpenAI(openaiRequest) {
   logDebug('Transforming OpenAI request to target OpenAI format');
-  
+
   const targetRequest = {
     model: openaiRequest.model,
     input: [],
@@ -12,10 +15,17 @@ export function transformToOpenAI(openaiRequest) {
   };
 
   // Transform max_tokens to max_output_tokens
-  if (openaiRequest.max_tokens) {
-    targetRequest.max_output_tokens = openaiRequest.max_tokens;
-  } else if (openaiRequest.max_completion_tokens) {
-    targetRequest.max_output_tokens = openaiRequest.max_completion_tokens;
+  const requestedMaxTokens =
+    openaiRequest.max_tokens ?? openaiRequest.max_completion_tokens;
+  if (requestedMaxTokens !== undefined && requestedMaxTokens !== null) {
+    const numeric = Number(requestedMaxTokens);
+    const parsed = Number.isFinite(numeric)
+      ? numeric
+      : DEFAULT_MAX_OUTPUT_TOKENS;
+    const clamped = Math.max(MIN_OUTPUT_TOKENS, parsed);
+    targetRequest.max_output_tokens = clamped;
+  } else {
+    targetRequest.max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS;
   }
 
   // Transform messages to input
@@ -109,18 +119,20 @@ export function transformToOpenAI(openaiRequest) {
   }
 
   // Pass through other parameters
-  if (openaiRequest.temperature !== undefined) {
-    targetRequest.temperature = openaiRequest.temperature;
-  }
-  if (openaiRequest.top_p !== undefined) {
-    targetRequest.top_p = openaiRequest.top_p;
-  }
-  if (openaiRequest.presence_penalty !== undefined) {
-    targetRequest.presence_penalty = openaiRequest.presence_penalty;
-  }
-  if (openaiRequest.frequency_penalty !== undefined) {
-    targetRequest.frequency_penalty = openaiRequest.frequency_penalty;
-  }
+  const defaults = {
+    temperature: 0.7,
+    top_p: 1,
+    presence_penalty: 0,
+    frequency_penalty: 0
+  };
+
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (openaiRequest[key] != null) {
+      targetRequest[key] = openaiRequest[key];
+    } else {
+      targetRequest[key] = value;
+    }
+  });
   if (openaiRequest.parallel_tool_calls !== undefined) {
     targetRequest.parallel_tool_calls = openaiRequest.parallel_tool_calls;
   }
