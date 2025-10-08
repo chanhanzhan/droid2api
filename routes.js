@@ -8,6 +8,7 @@ import { transformToCommon, getCommonHeaders } from './transformers/request-comm
 import { AnthropicResponseTransformer } from './transformers/response-anthropic.js';
 import { OpenAIResponseTransformer } from './transformers/response-openai.js';
 import { getApiKey } from './auth.js';
+import { normalizeOpenAIStyleRequest } from './transformers/normalize-openai-request.js';
 
 const router = express.Router();
 
@@ -42,9 +43,9 @@ router.get('/v1/models', (req, res) => {
 // 标准 OpenAI 聊天补全处理函数（带格式转换）
 async function handleChatCompletions(req, res) {
   logInfo('POST /v1/chat/completions');
-  
+
   try {
-    const openaiRequest = req.body;
+    const openaiRequest = normalizeOpenAIStyleRequest(req.body);
     const modelId = openaiRequest.model;
 
     if (!modelId) {
@@ -179,7 +180,7 @@ async function handleDirectResponses(req, res) {
   logInfo('POST /v1/responses');
   
   try {
-    const openaiRequest = req.body;
+    const openaiRequest = normalizeOpenAIStyleRequest(req.body);
     const modelId = openaiRequest.model;
 
     if (!modelId) {
