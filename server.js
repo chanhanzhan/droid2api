@@ -1,13 +1,61 @@
 import express from 'express';
-import { loadConfig, isDevMode, getPort } from './config.js';
+import { loadConfig, isDevMode, getPort, getBindHost, getRequiredApiKey } from './config.js';
 import { logInfo, logError } from './logger.js';
 import router from './routes.js';
 import { initializeAuth } from './auth.js';
 
 const app = express();
+const API_KEY_HEADER = 'x-api-key';
+let cachedRequiredApiKey = undefined;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.use((req, res, next) => {
+  if (cachedRequiredApiKey === undefined) {
+    try {
+      cachedRequiredApiKey = getRequiredApiKey();
+    } catch (error) {
+      logError('Failed to load API key configuration', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  if (!cachedRequiredApiKey) {
+    return next();
+  }
+
+  let providedKey = req.headers[API_KEY_HEADER];
+  if (Array.isArray(providedKey)) {
+    providedKey = providedKey[0];
+  }
+
+  if (!providedKey && typeof req.headers.authorization === 'string') {
+    const match = req.headers.authorization.match(/^Bearer\s+(.+)$/i);
+    if (match) {
+      providedKey = match[1];
+    }
+  }
+
+  if (typeof providedKey === 'string') {
+    providedKey = providedKey.trim();
+  }
+
+  if (providedKey && providedKey === cachedRequiredApiKey) {
+    return next();
+  }
+
+  logInfo('Blocked request with invalid or missing API key', {
+    path: req.originalUrl || req.url,
+    method: req.method,
+    clientIp: req.ip || (req.connection ? req.connection.remoteAddress : undefined)
+  });
+
+  return res.status(401).json({
+    error: 'Unauthorized',
+    message: 'Invalid or missing API key. Provide the configured API key via the X-API-Key header or an Authorization: Bearer token.'
+  });
+});
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -107,26 +155,35 @@ app.use((err, req, res, next) => {
 (async () => {
   try {
     loadConfig();
+    cachedRequiredApiKey = getRequiredApiKey();
     logInfo('Configuration loaded successfully');
     logInfo(`Dev mode: ${isDevMode()}`);
-    
+
+    if (cachedRequiredApiKey) {
+      logInfo('API key protection enabled. Remote access requires a valid X-API-Key header.');
+    } else {
+      logInfo('No API key configured. Server will only listen on 127.0.0.1. Set config.api_key to enable remote access.');
+    }
+
     // Initialize auth system (load and setup API key if needed)
     // This won't throw error if no auth config is found - will use client auth
     await initializeAuth();
-    
+
     const PORT = getPort();
-  logInfo(`Starting server on port ${PORT}...`);
-  
-  const server = app.listen(PORT)
-    .on('listening', () => {
-      logInfo(`Server running on http://localhost:${PORT}`);
-      logInfo('Available endpoints:');
-      logInfo('  GET  /v1/models');
-      logInfo('  POST /v1/chat/completions');
-      logInfo('  POST /v1/responses');
-      logInfo('  POST /v1/messages');
-    })
-    .on('error', (err) => {
+    const HOST = getBindHost();
+    logInfo(`Starting server on ${HOST}:${PORT}...`);
+
+    const server = app.listen(PORT, HOST)
+      .on('listening', () => {
+        const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+        logInfo(`Server running on http://${displayHost}:${PORT} (bound to ${HOST})`);
+        logInfo('Available endpoints:');
+        logInfo('  GET  /v1/models');
+        logInfo('  POST /v1/chat/completions');
+        logInfo('  POST /v1/responses');
+        logInfo('  POST /v1/messages');
+      })
+      .on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         console.error(`\n${'='.repeat(80)}`);
         console.error(`ERROR: Port ${PORT} is already in use!`);
