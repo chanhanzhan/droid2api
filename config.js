@@ -45,6 +45,25 @@ export function getPort() {
   return cfg.port || 3000;
 }
 
+export function getRequiredApiKey() {
+  const cfg = getConfig();
+  if (!cfg || cfg.api_key === undefined || cfg.api_key === null) {
+    return null;
+  }
+
+  const key = typeof cfg.api_key === 'string' ? cfg.api_key.trim() : String(cfg.api_key).trim();
+  return key.length > 0 ? key : null;
+}
+
+export function getBindHost() {
+  const cfg = getConfig();
+  if (cfg && typeof cfg.bind_host === 'string' && cfg.bind_host.trim()) {
+    return cfg.bind_host.trim();
+  }
+
+  return getRequiredApiKey() ? '0.0.0.0' : '127.0.0.1';
+}
+
 export function getSystemPrompt() {
   const cfg = getConfig();
   return cfg.system_prompt || '';

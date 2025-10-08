@@ -1,9 +1,12 @@
 import { logDebug } from '../logger.js';
 import { getSystemPrompt, getModelReasoning, getUserAgent } from '../config.js';
 
+const MIN_OUTPUT_TOKENS = 16;
+const DEFAULT_MAX_TOKENS = 4096;
+
 export function transformToAnthropic(openaiRequest) {
   logDebug('Transforming OpenAI request to Anthropic format');
-  
+
   const anthropicRequest = {
     model: openaiRequest.model,
     messages: [],
@@ -11,12 +14,16 @@ export function transformToAnthropic(openaiRequest) {
   };
 
   // Handle max_tokens
-  if (openaiRequest.max_tokens) {
-    anthropicRequest.max_tokens = openaiRequest.max_tokens;
-  } else if (openaiRequest.max_completion_tokens) {
-    anthropicRequest.max_tokens = openaiRequest.max_completion_tokens;
+  const requestedMaxTokens =
+    openaiRequest.max_tokens ?? openaiRequest.max_completion_tokens;
+  if (requestedMaxTokens !== undefined && requestedMaxTokens !== null) {
+    const numeric = Number(requestedMaxTokens);
+    const parsed = Number.isFinite(numeric)
+      ? numeric
+      : DEFAULT_MAX_TOKENS;
+    anthropicRequest.max_tokens = Math.max(MIN_OUTPUT_TOKENS, parsed);
   } else {
-    anthropicRequest.max_tokens = 4096;
+    anthropicRequest.max_tokens = DEFAULT_MAX_TOKENS;
   }
 
   // Extract system message(s) and transform other messages
@@ -140,11 +147,15 @@ export function transformToAnthropic(openaiRequest) {
   }
 
   // Pass through other compatible parameters
-  if (openaiRequest.temperature !== undefined) {
+  if (openaiRequest.temperature != null) {
     anthropicRequest.temperature = openaiRequest.temperature;
+  } else {
+    anthropicRequest.temperature = 0.7;
   }
-  if (openaiRequest.top_p !== undefined) {
+  if (openaiRequest.top_p != null) {
     anthropicRequest.top_p = openaiRequest.top_p;
+  } else {
+    anthropicRequest.top_p = 0.95;
   }
   if (openaiRequest.stop !== undefined) {
     anthropicRequest.stop_sequences = Array.isArray(openaiRequest.stop) 

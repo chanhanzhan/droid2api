@@ -9,13 +9,42 @@ let currentApiKey = null;
 let currentRefreshToken = null;
 let lastRefreshTime = null;
 let clientId = null;
-let authSource = null; // 'env' or 'file' or 'factory_key' or 'client'
+let authSource = null; // 'env' or 'file' or 'factory_key' or 'client' or 'pool'
 let authFilePath = null;
 let factoryApiKey = null; // From FACTORY_API_KEY environment variable
+
+// Pool state for multi-account rotation
+let accountPool = [];
+let currentAccountIndex = 0;
 
 const REFRESH_URL = 'https://api.workos.com/user_management/authenticate';
 const REFRESH_INTERVAL_HOURS = 6; // Refresh every 6 hours
 const TOKEN_VALID_HOURS = 8; // Token valid for 8 hours
+
+function normalizeKeyList(raw) {
+  if (!raw) {
+    return [];
+  }
+
+  if (Array.isArray(raw)) {
+    return raw
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter((value) => value);
+  }
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.includes(',')) {
+      return trimmed
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value);
+    }
+    return trimmed ? [trimmed] : [];
+  }
+
+  return [];
+}
 
 /**
  * Generate a ULID (Universally Unique Lexicographically Sortable Identifier)
@@ -57,18 +86,78 @@ function generateClientId() {
   return `client_01${ulid}`;
 }
 
+function buildAccountPoolFromConfig(config, sourceLabel) {
+  if (!config || typeof config !== 'object') {
+    return [];
+  }
+
+  const factoryKeys = normalizeKeyList(
+    config.FACTORY_API_KEY || config.factory_api_key || config.factory_api_keys
+  );
+  const refreshKeys = normalizeKeyList(
+    config.DROID_REFRESH_KEY || config.droid_refresh_key || config.droid_refresh_keys
+  );
+
+  const accounts = [];
+
+  factoryKeys.forEach((key, index) => {
+    accounts.push({
+      type: 'factory_key',
+      apiKey: key,
+      label: `${sourceLabel}:factory:${index + 1}`
+    });
+  });
+
+  refreshKeys.forEach((key, index) => {
+    accounts.push({
+      type: 'refresh',
+      refreshToken: key,
+      accessToken: null,
+      lastRefreshTime: null,
+      label: `${sourceLabel}:refresh:${index + 1}`
+    });
+  });
+
+  return accounts;
+}
+
 /**
  * Load auth configuration with priority system
  * Priority: FACTORY_API_KEY > refresh token mechanism > client authorization
  */
 function loadAuthConfig() {
+  accountPool = [];
+  currentAccountIndex = 0;
+
   // 1. Check FACTORY_API_KEY environment variable (highest priority)
   const factoryKey = process.env.FACTORY_API_KEY;
   if (factoryKey && factoryKey.trim() !== '') {
     logInfo('Using fixed API key from FACTORY_API_KEY environment variable');
     factoryApiKey = factoryKey.trim();
     authSource = 'factory_key';
+    authFilePath = null;
     return { type: 'factory_key', value: factoryKey.trim() };
+  }
+
+  // 2. Check auth.json in current working directory for multi-account configuration
+  const localAuthPath = path.join(process.cwd(), 'auth.json');
+  if (fs.existsSync(localAuthPath)) {
+    try {
+      const raw = fs.readFileSync(localAuthPath, 'utf-8');
+      const config = JSON.parse(raw);
+      const pool = buildAccountPoolFromConfig(config, 'auth.json');
+
+      if (pool.length > 0) {
+        logInfo(`Using multi-account configuration from ${localAuthPath}`);
+        authSource = 'pool';
+        authFilePath = localAuthPath;
+        accountPool = pool;
+        currentAccountIndex = 0;
+        return { type: 'pool', accounts: pool, filePath: localAuthPath };
+      }
+    } catch (error) {
+      logError('Error parsing auth.json configuration', error);
+    }
   }
 
   // 2. Check refresh token mechanism (DROID_REFRESH_KEY)
@@ -115,8 +204,10 @@ function loadAuthConfig() {
 /**
  * Refresh API key using refresh token
  */
-async function refreshApiKey() {
-  if (!currentRefreshToken) {
+async function refreshApiKey(account = null) {
+  const refreshToken = account ? account.refreshToken : currentRefreshToken;
+
+  if (!refreshToken) {
     throw new Error('No refresh token available');
   }
 
@@ -125,13 +216,14 @@ async function refreshApiKey() {
     logDebug(`Using fixed client ID: ${clientId}`);
   }
 
-  logInfo('Refreshing API key...');
+  const label = account ? account.label : 'default';
+  logInfo(`Refreshing API key (${label})...`);
 
   try {
     // Create form data
     const formData = new URLSearchParams();
     formData.append('grant_type', 'refresh_token');
-    formData.append('refresh_token', currentRefreshToken);
+    formData.append('refresh_token', refreshToken);
     formData.append('client_id', clientId);
 
     const response = await fetch(REFRESH_URL, {
@@ -150,9 +242,15 @@ async function refreshApiKey() {
     const data = await response.json();
     
     // Update tokens
-    currentApiKey = data.access_token;
-    currentRefreshToken = data.refresh_token;
-    lastRefreshTime = Date.now();
+    if (account) {
+      account.accessToken = data.access_token;
+      account.refreshToken = data.refresh_token;
+      account.lastRefreshTime = Date.now();
+    } else {
+      currentApiKey = data.access_token;
+      currentRefreshToken = data.refresh_token;
+      lastRefreshTime = Date.now();
+    }
 
     // Log user info
     if (data.user) {
@@ -162,14 +260,16 @@ async function refreshApiKey() {
     }
 
     // Save tokens to file
-    saveTokens(data.access_token, data.refresh_token);
+    if (!account) {
+      saveTokens(data.access_token, data.refresh_token);
+    }
 
-    logInfo(`New Refresh-Key: ${currentRefreshToken}`);
+    logInfo(`New Refresh-Key (${label}): ${account ? account.refreshToken : currentRefreshToken}`);
     logInfo('API key refreshed successfully');
     return data.access_token;
 
   } catch (error) {
-    logError('Failed to refresh API key', error);
+    logError(`Failed to refresh API key (${label})`, error);
     throw error;
   }
 }
@@ -216,13 +316,54 @@ function saveTokens(accessToken, refreshToken) {
 /**
  * Check if API key needs refresh (older than 6 hours)
  */
-function shouldRefresh() {
-  if (!lastRefreshTime) {
+function shouldRefresh(lastTime) {
+  if (!lastTime) {
     return true;
   }
 
-  const hoursSinceRefresh = (Date.now() - lastRefreshTime) / (1000 * 60 * 60);
+  const hoursSinceRefresh = (Date.now() - lastTime) / (1000 * 60 * 60);
   return hoursSinceRefresh >= REFRESH_INTERVAL_HOURS;
+}
+
+async function ensureAccountToken(account) {
+  if (account.type === 'factory_key') {
+    return account.apiKey;
+  }
+
+  if (account.type === 'refresh') {
+    if (!account.accessToken || shouldRefresh(account.lastRefreshTime)) {
+      await refreshApiKey(account);
+    }
+
+    if (!account.accessToken) {
+      throw new Error(`No API key available for account ${account.label}`);
+    }
+
+    return account.accessToken;
+  }
+
+  throw new Error(`Unsupported account type: ${account.type}`);
+}
+
+async function getApiKeyFromPool() {
+  if (!accountPool.length) {
+    throw new Error('No accounts configured in auth pool.');
+  }
+
+  for (let attempt = 0; attempt < accountPool.length; attempt++) {
+    const index = currentAccountIndex;
+    currentAccountIndex = (currentAccountIndex + 1) % accountPool.length;
+    const account = accountPool[index];
+
+    try {
+      const token = await ensureAccountToken(account);
+      return `Bearer ${token}`;
+    } catch (error) {
+      logError(`Failed to obtain token from account ${account.label}`, error);
+    }
+  }
+
+  throw new Error('Unable to obtain API key from any configured account.');
 }
 
 /**
@@ -235,10 +376,29 @@ export async function initializeAuth() {
     if (authConfig.type === 'factory_key') {
       // Using fixed FACTORY_API_KEY, no refresh needed
       logInfo('Auth system initialized with fixed API key');
+    } else if (authConfig.type === 'pool') {
+      accountPool = authConfig.accounts || accountPool;
+      authSource = 'pool';
+
+      let refreshedCount = 0;
+      for (const account of accountPool) {
+        if (account.type === 'refresh') {
+          try {
+            await refreshApiKey(account);
+            refreshedCount += 1;
+          } catch (error) {
+            logError(`Failed to initialize account ${account.label}`, error);
+          }
+        }
+      }
+
+      logInfo(
+        `Auth system initialized with multi-account pool (${accountPool.length} accounts, ${refreshedCount} refreshed)`
+      );
     } else if (authConfig.type === 'refresh') {
       // Using refresh token mechanism
       currentRefreshToken = authConfig.value;
-      
+
       // Always refresh on startup to get fresh token
       await refreshApiKey();
       logInfo('Auth system initialized with refresh token mechanism');
@@ -263,11 +423,15 @@ export async function getApiKey(clientAuthorization = null) {
   if (authSource === 'factory_key' && factoryApiKey) {
     return `Bearer ${factoryApiKey}`;
   }
-  
+
+  if (authSource === 'pool') {
+    return await getApiKeyFromPool();
+  }
+
   // Priority 2: Refresh token mechanism
   if (authSource === 'env' || authSource === 'file') {
     // Check if we need to refresh
-    if (shouldRefresh()) {
+    if (shouldRefresh(lastRefreshTime)) {
       logInfo('API key needs refresh (6+ hours old)');
       await refreshApiKey();
     }
@@ -286,5 +450,7 @@ export async function getApiKey(clientAuthorization = null) {
   }
   
   // No authorization available
-  throw new Error('No authorization available. Please configure FACTORY_API_KEY, refresh token, or provide client authorization.');
+  throw new Error(
+    'No authorization available. Please configure FACTORY_API_KEY, refresh token, or provide client authorization.'
+  );
 }

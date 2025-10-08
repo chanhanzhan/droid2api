@@ -5,6 +5,8 @@ OpenAI 兼容的 API 代理服务器，统一访问不同的 LLM 模型。
 ## 核心功能
 
 ### 🔐 双重授权机制
+- **本地 API Key 防护** - 在 config.json 中配置 `api_key` 后，服务端要求请求携带匹配的 `X-API-Key` 或 `Authorization: Bearer` 令牌，并自动开放 0.0.0.0 监听
+- **无密钥自动本地化** - 未配置 `api_key` 时仅绑定 127.0.0.1，避免未鉴权情况下暴露到局域网
 - **FACTORY_API_KEY优先级** - 环境变量设置固定API密钥，跳过自动刷新
 - **令牌自动刷新** - WorkOS OAuth集成，系统每6小时自动刷新access_token
 - **客户端授权回退** - 无配置时使用客户端请求头的authorization字段
@@ -55,6 +57,28 @@ npm install
 
 ## 快速开始
 
+### 0. 配置 API 访问密钥（推荐）
+
+- 在 `config.json` 中设置 `api_key` 字段（建议使用随机长字符串）。
+- 服务器会要求所有请求携带 `X-API-Key: <你的密钥>` 或 `Authorization: Bearer <你的密钥>`。
+- 当该字段为空或缺失时，服务仅监听 `127.0.0.1`，外部网络无法直接访问。
+
+示例：
+
+```json
+{
+  "port": 3000,
+  "api_key": "my-secure-token"
+}
+```
+
+请求示例：
+
+```bash
+curl http://localhost:3000/v1/models \
+  -H "X-API-Key: my-secure-token"
+```
+
 ### 1. 配置认证（三种方式）
 
 **优先级：FACTORY_API_KEY > refresh_token > 客户端authorization**
@@ -83,6 +107,7 @@ export DROID_REFRESH_KEY="your_refresh_token_here"
 ```json
 {
   "port": 3000,
+  "api_key": "my-secure-token",
   "models": [
     {
       "name": "Claude Opus 4",
@@ -153,7 +178,7 @@ Windows：
 start.bat
 ```
 
-服务器默认运行在 `http://localhost:3000`。
+服务器默认运行在 `http://127.0.0.1:3000`（未配置 `api_key` 时仅本机可访问；设置 `api_key` 后自动绑定 `0.0.0.0` 并要求携带对应密钥）。
 
 ### Docker部署
 
@@ -279,7 +304,25 @@ droid2api支持三级授权优先级：
    ```
    自动刷新令牌，每6小时更新一次。
 
-3. **客户端授权**（fallback）
+3. **auth.json多账号轮询**
+   在项目根目录创建 `auth.json`，支持配置多个 `FACTORY_API_KEY` 或 `DROID_REFRESH_KEY`，系统会自动轮询：
+   ```json
+   {
+     "FACTORY_API_KEY": [
+       "factory_key_account_a",
+       "factory_key_account_b"
+     ],
+     "DROID_REFRESH_KEY": [
+       "refresh_token_account_c",
+       "refresh_token_account_d"
+     ]
+   }
+   ```
+   - 同时配置时会优先轮询 `FACTORY_API_KEY` 账号，其次刷新令牌账号
+   - 每次新的对话/请求都会按顺序切换账号（例如：A → B → C → A）
+   - 刷新令牌账号会在启动时预刷新，并按6小时节奏保持有效
+
+4. **客户端授权**（fallback）
    无需配置，直接使用客户端请求头的authorization字段。
 
 ### 什么时候使用FACTORY_API_KEY？
